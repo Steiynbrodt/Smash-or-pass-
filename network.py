@@ -2,6 +2,7 @@ import json
 import secrets
 import socket
 import threading
+import hashlib
 
 SOCKET_TIMEOUT = 0.5
 PORT_RANGE = (1, 65535)
@@ -35,12 +36,17 @@ def _validate_room_key(room_key: str) -> str:
     return room_key
 
 
+def _hash_room_key(room_key: str) -> str:
+    return hashlib.sha256(room_key.encode("utf-8")).hexdigest()
+
+
 class Network:
     def __init__(self, host_ip="", port=55555, room_key=None, username="Player"):
         self.host_ip = host_ip
         self.port = _validate_port(port)
         self.username = _validate_username(username)
         self.room_key = _validate_room_key(room_key)
+        self.room_key_hash = _hash_room_key(self.room_key)
         self.is_host = not bool(host_ip)
 
         self.callbacks = {}
@@ -57,7 +63,7 @@ class Network:
             self.server_addr = (self.host_ip, self.port)
             self._send_raw(
                 self.server_addr,
-                {"type": "join", "data": {"username": self.username, "room_key": self.room_key}},
+                {"type": "join", "data": {"username": self.username, "room_key_hash": self.room_key_hash}},
             )
 
         self.listener = threading.Thread(target=self._listen, daemon=True)
@@ -67,7 +73,7 @@ class Network:
         self.callbacks[event] = callback
 
     def send(self, event, data):
-        payload = {"type": event, "data": data, "room_key": self.room_key, "username": self.username}
+        payload = {"type": event, "data": data, "room_key_hash": self.room_key_hash, "username": self.username}
         if self.is_host:
             for addr in list(self.clients.keys()):
                 self._send_raw(addr, payload)
@@ -111,7 +117,8 @@ class Network:
 
             if self.is_host:
                 if msg_type == "join":
-                    if data.get("room_key") != self.room_key:
+                    join_key_hash = data.get("room_key_hash")
+                    if join_key_hash != self.room_key_hash:
                         continue
                     username = _validate_username(data.get("username", "Player"))
                     self.clients[addr] = username
@@ -120,7 +127,7 @@ class Network:
                         callback({"username": username}, addr)
                     continue
 
-                if message.get("room_key") != self.room_key:
+                if message.get("room_key_hash") != self.room_key_hash:
                     continue
 
             callback = self.callbacks.get(msg_type)
