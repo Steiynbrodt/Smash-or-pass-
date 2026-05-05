@@ -64,19 +64,21 @@ class GameLogic:
             print(f"Error loading image: {e}")
             return None, None
 
-    def _scale_image(self, img):
+    def _scale_image(self, img, max_size=None):
         """Scale image maintaining aspect ratio"""
         try:
+            target_size = max_size or self.max_size
+            working_img = img.copy().convert("RGB")
             # Maintain aspect ratio, fit within max_size
-            img.thumbnail(self.max_size, Image.LANCZOS)
+            working_img.thumbnail(target_size, Image.LANCZOS)
             # Create a new image with black background
-            background = Image.new('RGB', self.max_size, (0, 0, 0))
+            background = Image.new('RGB', target_size, (0, 0, 0))
             # Paste the resized image in the center
             offset = (
-                (self.max_size[0] - img.width) // 2,
-                (self.max_size[1] - img.height) // 2
+                (target_size[0] - working_img.width) // 2,
+                (target_size[1] - working_img.height) // 2
             )
-            background.paste(img, offset)
+            background.paste(working_img, offset)
             return background
         except Exception as e:
             print(f"Error scaling image: {e}")
