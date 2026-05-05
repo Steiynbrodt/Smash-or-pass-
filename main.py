@@ -235,7 +235,6 @@ class SmashOrPassApp:
         h = max(250, self.image_frame.winfo_height() - 20)
         return self.game._scale_image(img, max_size=(w, h))
 
-    # --- REST OF THE CODE (Unchanged) ---
     def select_folder(self):
         folder = filedialog.askdirectory()
         if folder:
@@ -265,11 +264,10 @@ class SmashOrPassApp:
             self.network.on('vote_results', self.receive_vote_results)
             self.network.on('user_joined', self.user_joined)
             self.status_label.config(text=f"Joined game at {host_ip}")
-            self._set_vote_buttons_enabled(True)
+            self._set_vote_buttons_enabled(False)
 
     def start_game(self):
         self.next_image()
-        self._set_vote_buttons_enabled(True)
 
     def next_image(self):
         img, path = self.game.get_random_image()
@@ -438,6 +436,8 @@ class SmashOrPassApp:
         pass_count = int(data.get("pass", 0))
         weighted_smash = int(data.get("weighted_smash", smash_count + (2 * hellyeah_count)))
         total = int(data.get("total", smash_count + pass_count))
+        if "total" not in data:
+            total = smash_count + hellyeah_count + pass_count
         self.results_text.config(state=tk.NORMAL)
         self.results_text.insert(tk.END, "\n--- Round Result ---\n")
         self.results_text.insert(tk.END, f"Total votes: {total}\n")
