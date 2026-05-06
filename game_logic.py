@@ -27,20 +27,22 @@ class GameLogic:
         images = []
         valid_ext = ('.png', '.jpg', '.jpeg', '.gif', '.bmp')
 
-        def _validate_image_path(file_path):
-            file_abs_path = os.path.abspath(file_path)
-            if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
-                print(f"Security warning: Skipping file outside image folder: {file_path}")
-                return None
-            filename = os.path.basename(file_abs_path)
-            if not filename.lower().endswith(valid_ext) or not os.path.isfile(file_abs_path):
-                return None
-            return os.path.relpath(file_abs_path, self.image_folder)
-
-        candidate_paths = []
         try:
             for root, _, files in os.walk(self.image_folder):
-                candidate_paths.extend(os.path.join(root, f) for f in files)
+                for f in files:
+                    # Validate file is within image folder (prevent directory traversal)
+                    file_path = os.path.join(root, f)
+                    file_abs_path = os.path.abspath(file_path)
+
+                    # Security check: ensure file is within the image folder
+                    if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
+                        print(f"Security warning: Skipping file outside image folder: {f}")
+                        continue
+
+                    if os.path.isfile(file_abs_path) and f.lower().endswith(valid_ext):
+                        # Store relative path so images in nested folders are included.
+                        rel_path = os.path.relpath(file_abs_path, self.image_folder)
+                        images.append(rel_path)
         except OSError as e:
             print(f"Error reading image folder: {e}")
             return images
