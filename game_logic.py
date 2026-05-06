@@ -11,10 +11,10 @@ def _validate_image_path(args):
     try:
         if os.path.commonpath([image_folder, file_abs_path]) != image_folder:
             return None
-        if not os.path.isfile(file_abs_path):
-            return None
+        with Image.open(file_abs_path) as img:
+            img.verify()
         return rel_path
-    except OSError:
+    except Exception:
         return None
 
 
