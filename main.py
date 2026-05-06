@@ -7,10 +7,14 @@ import base64
 import io
 
 
-MAX_IMAGE_BYTES = 48000
-MAX_IMAGE_B64_CHARS = 70000
+MAX_IMAGE_BYTES = 36000
+MAX_IMAGE_B64_CHARS = 52000
 CHUNK_B64_SIZE = 12000
 MAX_CHUNKS = 24
+MAX_CHUNKED_IMAGE_BYTES = 180000
+MAX_CHUNKED_IMAGE_B64_CHARS = MAX_CHUNKS * CHUNK_B64_SIZE
+CHUNK_REDUNDANCY = 2
+CHUNK_RECEIVE_TIMEOUT_MS = 8000
 VALID_VOTES = {"smash", "pass", "hellyeah"}
 VOTE_WEIGHTS = {"smash": 1, "pass": 0, "hellyeah": 2}
 from game_logic import GameLogic
@@ -328,6 +332,15 @@ class SmashOrPassApp:
                     self._send_chunked_image(self.current_image_name, best_data)
                 else:
                     self.network.send('next_image', payload)
+            return
+
+        self.current_image = None
+        self.current_image_path = None
+        self.current_image_name = None
+        self.image_label.config(image="", text="No loadable images found")
+        self.image_label.image = None
+        self.status_label.config(text="No image could be loaded. Check image files and format support.")
+        self._set_vote_buttons_enabled(False)
 
     def _set_vote_buttons_enabled(self, enabled):
         state = tk.NORMAL if enabled else tk.DISABLED
@@ -357,6 +370,15 @@ class SmashOrPassApp:
             print(f"Error encoding image for network: {e}")
             return None, None
 
+    def _prune_stale_chunk_transfers(self):
+        now_ms = int(self.root.winfo_toplevel().tk.call("clock", "milliseconds"))
+        stale_ids = [
+            tid for tid, payload in self.pending_image_chunks.items()
+            if now_ms - payload.get("started_ms", now_ms) > CHUNK_RECEIVE_TIMEOUT_MS
+        ]
+        for tid in stale_ids:
+            del self.pending_image_chunks[tid]
+
     def _send_chunked_image(self, filename, image_data):
         if not self.network or not self.network.is_host or not image_data:
             return
@@ -367,13 +389,15 @@ class SmashOrPassApp:
         transfer_id = f"{filename}:{len(image_data)}"
         self.network.send('next_image', {'filename': filename, 'transfer_id': transfer_id, 'chunked': True, 'total_chunks': len(chunks)})
         for index, chunk in enumerate(chunks):
-            self.network.send('next_image_chunk', {
+            payload = {
                 'filename': filename,
                 'transfer_id': transfer_id,
                 'index': index,
                 'total_chunks': len(chunks),
                 'chunk': chunk,
-            })
+            }
+            for _ in range(CHUNK_REDUNDANCY):
+                self.network.send('next_image_chunk', payload)
 
     def receive_next_image(self, data, addr=None):
         self.root.after(0, lambda: self._receive_next_image(data))
@@ -389,20 +413,25 @@ class SmashOrPassApp:
             return
         image_b64 = data.get('image_b64')
         if data.get('chunked'):
+            self._prune_stale_chunk_transfers()
             transfer_id = data.get('transfer_id')
             total_chunks = int(data.get('total_chunks', 0))
             if not transfer_id or total_chunks <= 0 or total_chunks > MAX_CHUNKS:
                 return
-            self.pending_image_chunks[transfer_id] = {'filename': filename, 'total': total_chunks, 'chunks': {}}
+            now_ms = int(self.root.winfo_toplevel().tk.call("clock", "milliseconds"))
+            self.pending_image_chunks[transfer_id] = {'filename': filename, 'total': total_chunks, 'chunks': {}, 'started_ms': now_ms}
             self.status_label.config(text="Receiving image chunks...")
             return
-        if image_b64 and len(image_b64) > MAX_IMAGE_B64_CHARS:
+        is_chunked_transfer = bool(data.get('chunked_transfer'))
+        max_b64_chars = MAX_CHUNKED_IMAGE_B64_CHARS if is_chunked_transfer else MAX_IMAGE_B64_CHARS
+        if image_b64 and len(image_b64) > max_b64_chars:
             print("Security warning: oversized image payload blocked")
             return
         try:
             if image_b64:
                 decoded = base64.b64decode(image_b64, validate=True)
-                if len(decoded) > MAX_IMAGE_BYTES:
+                decoded_limit = MAX_CHUNKED_IMAGE_BYTES if is_chunked_transfer else MAX_IMAGE_BYTES
+                if len(decoded) > decoded_limit:
                     print("Security warning: oversized decoded image blocked")
                     return
                 with Image.open(io.BytesIO(decoded)) as opened:
@@ -430,6 +459,7 @@ class SmashOrPassApp:
             self.votes = {}
             self.update_results()
         except Exception as e:
+            self.status_label.config(text="Failed to decode received image.")
             print(f"Error loading image from network: {e}")
 
 
@@ -437,11 +467,16 @@ class SmashOrPassApp:
         self.root.after(0, lambda: self._receive_next_image_chunk(data))
 
     def _receive_next_image_chunk(self, data):
+        self._prune_stale_chunk_transfers()
         transfer_id = data.get('transfer_id')
         chunk = data.get('chunk')
         index = data.get('index')
-        total_chunks = int(data.get('total_chunks', 0))
-        if not transfer_id or not isinstance(chunk, str) or not isinstance(index, int):
+        try:
+            index = int(index)
+            total_chunks = int(data.get('total_chunks', 0))
+        except (TypeError, ValueError):
+            return
+        if not transfer_id or not isinstance(chunk, str):
             return
         pending = self.pending_image_chunks.get(transfer_id)
         if not pending or pending.get('total') != total_chunks:
@@ -453,7 +488,7 @@ class SmashOrPassApp:
             return
         assembled = ''.join(pending['chunks'].get(i, '') for i in range(total_chunks))
         del self.pending_image_chunks[transfer_id]
-        self._receive_next_image({'filename': pending['filename'], 'image_b64': assembled})
+        self._receive_next_image({'filename': pending['filename'], 'image_b64': assembled, 'chunked_transfer': True})
 
     def vote_smash(self):
         self.send_vote("smash")

@@ -100,8 +100,8 @@ class Network:
     def _send_raw(self, addr, payload):
         try:
             self.sock.sendto(json.dumps(payload).encode("utf-8"), addr)
-        except OSError:
-            pass
+        except OSError as e:
+            print(f"Network send error to {addr}: {e}")
 
     def _listen(self):
         while self.running:
