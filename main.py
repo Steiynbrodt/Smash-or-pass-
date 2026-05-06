@@ -263,6 +263,8 @@ class SmashOrPassApp:
     def select_folder(self):
         folder = filedialog.askdirectory()
         if folder:
+            if self.game:
+                self.game.close()
             self.image_folder = folder
             self.game = GameLogic(folder)
             self.status_label.config(text=f"Image folder: {folder}")
@@ -585,6 +587,7 @@ class SmashOrPassApp:
             self.root.after_cancel(self.resize_after_id)
         if self.network:
             self.network.close()
+        self.game.close()
         self.root.quit()
 
 if __name__ == '__main__':
