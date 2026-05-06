@@ -1,13 +1,33 @@
 import os
 import random
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageTk
+
+
+def _validate_image_path(args):
+    image_folder, rel_path = args
+    file_abs_path = os.path.abspath(os.path.join(image_folder, rel_path))
+    try:
+        if os.path.commonpath([image_folder, file_abs_path]) != image_folder:
+            return None
+        if not os.path.isfile(file_abs_path):
+            return None
+        return rel_path
+    except OSError:
+        return None
+
 
 class GameLogic:
     def __init__(self, image_folder, max_size=(500, 500)):
         self.image_folder = os.path.abspath(image_folder)  # Resolve to absolute path
         self.max_size = max_size
         self.images = self._load_images()
+        self._image_cycle = []
+        self._cycle_lock = threading.Lock()
+        self._preload_lock = threading.Lock()
+        self._preload_executor = ThreadPoolExecutor(max_workers=1)
+        self._preloaded = None
         self.current_image = None
         self.current_image_path = None
 
@@ -19,70 +39,113 @@ class GameLogic:
             except OSError as e:
                 print(f"Error creating image folder: {e}")
             return []
-        
+
         if not os.path.isdir(self.image_folder):
             print(f"Error: {self.image_folder} is not a directory")
             return []
-        
-        images = []
+
+        candidates = []
         valid_ext = ('.png', '.jpg', '.jpeg', '.gif', '.bmp')
 
         try:
             for root, _, files in os.walk(self.image_folder):
                 for f in files:
-                    # Validate file is within image folder (prevent directory traversal)
                     file_path = os.path.join(root, f)
                     file_abs_path = os.path.abspath(file_path)
 
-                    # Security check: ensure file is within the image folder
                     if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
                         print(f"Security warning: Skipping file outside image folder: {f}")
                         continue
 
                     if os.path.isfile(file_abs_path) and f.lower().endswith(valid_ext):
-                        # Store relative path so images in nested folders are included.
                         rel_path = os.path.relpath(file_abs_path, self.image_folder)
-                        images.append(rel_path)
+                        candidates.append(rel_path)
         except OSError as e:
             print(f"Error reading image folder: {e}")
-            return images
+            return []
+
+        if not candidates:
+            return []
 
         max_workers = min(32, max(4, (os.cpu_count() or 1) * 2))
+        images = []
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            for rel_path in pool.map(_validate_image_path, candidate_paths):
+            for rel_path in pool.map(_validate_image_path, [(self.image_folder, p) for p in candidates]):
                 if rel_path:
                     images.append(rel_path)
 
         return images
+
+    def _next_image_candidate(self):
+        with self._cycle_lock:
+            if not self._image_cycle:
+                self._image_cycle = self.images.copy()
+                random.shuffle(self._image_cycle)
+            return self._image_cycle.pop() if self._image_cycle else None
+
+    def _load_scaled_image_for_path(self, file_abs_path):
+        with Image.open(file_abs_path) as opened:
+            return self._scale_image(opened)
+
+    def _prepare_candidate(self):
+        for _ in range(len(self.images)):
+            filename = self._next_image_candidate()
+            if not filename:
+                break
+            file_abs_path = os.path.abspath(os.path.join(self.image_folder, filename))
+            if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
+                print("Security error: Attempted directory traversal detected")
+                continue
+            try:
+                scaled = self._load_scaled_image_for_path(file_abs_path)
+                if scaled is None:
+                    continue
+                return scaled, file_abs_path
+            except Exception as e:
+                print(f"Error loading image '{filename}': {e}")
+        return None
+
+    def _schedule_preload(self):
+        if not self.images:
+            return
+        with self._preload_lock:
+            if self._preloaded is not None:
+                return
+            self._preloaded = self._preload_executor.submit(self._prepare_candidate)
 
     def get_random_image(self):
         """Get a random valid image, skipping unreadable/corrupt files."""
         if not self.images:
             return None, None
 
-        candidates = self.images.copy()
-        random.shuffle(candidates)
+        with self._preload_lock:
+            future = self._preloaded
+            self._preloaded = None
 
-        for filename in candidates:
+        result = None
+        if future is not None:
             try:
-                self.current_image_path = os.path.join(self.image_folder, filename)
+                result = future.result(timeout=5)
+            except Exception:
+                result = None
 
-                # Security check: verify the resolved path is still within image folder
-                file_abs_path = os.path.abspath(self.current_image_path)
-                if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
-                    print("Security error: Attempted directory traversal detected")
-                    continue
+        if result is None:
+            result = self._prepare_candidate()
+        if result is None:
+            return None, None
 
-                with Image.open(file_abs_path) as opened:
-                    img = self._scale_image(opened)
-                if img is None:
-                    continue
-                return ImageTk.PhotoImage(img), file_abs_path
-            except Exception as e:
-                print(f"Error loading image '{filename}': {e}")
-                continue
+        img, file_abs_path = result
+        self.current_image_path = file_abs_path
+        self._schedule_preload()
+        return ImageTk.PhotoImage(img), file_abs_path
 
-        return None, None
+    def close(self):
+        with self._preload_lock:
+            future = self._preloaded
+            self._preloaded = None
+        if future is not None:
+            future.cancel()
+        self._preload_executor.shutdown(wait=False, cancel_futures=True)
 
     def _scale_image(self, img, max_size=None):
         """Scale image maintaining aspect ratio and centered letterboxing."""
