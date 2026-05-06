@@ -3,6 +3,20 @@ import random
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageTk
 
+
+def _validate_image_path(args):
+    image_folder, rel_path = args
+    file_abs_path = os.path.abspath(os.path.join(image_folder, rel_path))
+    try:
+        if os.path.commonpath([image_folder, file_abs_path]) != image_folder:
+            return None
+        with Image.open(file_abs_path) as img:
+            img.verify()
+        return rel_path
+    except Exception:
+        return None
+
+
 class GameLogic:
     def __init__(self, image_folder, max_size=(500, 500)):
         self.image_folder = os.path.abspath(image_folder)  # Resolve to absolute path
@@ -19,37 +33,38 @@ class GameLogic:
             except OSError as e:
                 print(f"Error creating image folder: {e}")
             return []
-        
+
         if not os.path.isdir(self.image_folder):
             print(f"Error: {self.image_folder} is not a directory")
             return []
-        
-        images = []
+
+        candidates = []
         valid_ext = ('.png', '.jpg', '.jpeg', '.gif', '.bmp')
 
         try:
             for root, _, files in os.walk(self.image_folder):
                 for f in files:
-                    # Validate file is within image folder (prevent directory traversal)
                     file_path = os.path.join(root, f)
                     file_abs_path = os.path.abspath(file_path)
 
-                    # Security check: ensure file is within the image folder
                     if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
                         print(f"Security warning: Skipping file outside image folder: {f}")
                         continue
 
                     if os.path.isfile(file_abs_path) and f.lower().endswith(valid_ext):
-                        # Store relative path so images in nested folders are included.
                         rel_path = os.path.relpath(file_abs_path, self.image_folder)
-                        images.append(rel_path)
+                        candidates.append(rel_path)
         except OSError as e:
             print(f"Error reading image folder: {e}")
-            return images
+            return []
+
+        if not candidates:
+            return []
 
         max_workers = min(32, max(4, (os.cpu_count() or 1) * 2))
+        images = []
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            for rel_path in pool.map(_validate_image_path, candidate_paths):
+            for rel_path in pool.map(_validate_image_path, [(self.image_folder, p) for p in candidates]):
                 if rel_path:
                     images.append(rel_path)
 
