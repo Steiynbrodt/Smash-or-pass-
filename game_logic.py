@@ -1,5 +1,6 @@
 import os
 import random
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageTk
 
@@ -22,6 +23,11 @@ class GameLogic:
         self.image_folder = os.path.abspath(image_folder)  # Resolve to absolute path
         self.max_size = max_size
         self.images = self._load_images()
+        self._image_cycle = []
+        self._cycle_lock = threading.Lock()
+        self._preload_lock = threading.Lock()
+        self._preload_executor = ThreadPoolExecutor(max_workers=1)
+        self._preloaded = None
         self.current_image = None
         self.current_image_path = None
 
@@ -70,34 +76,76 @@ class GameLogic:
 
         return images
 
+    def _next_image_candidate(self):
+        with self._cycle_lock:
+            if not self._image_cycle:
+                self._image_cycle = self.images.copy()
+                random.shuffle(self._image_cycle)
+            return self._image_cycle.pop() if self._image_cycle else None
+
+    def _load_scaled_image_for_path(self, file_abs_path):
+        with Image.open(file_abs_path) as opened:
+            return self._scale_image(opened)
+
+    def _prepare_candidate(self):
+        for _ in range(len(self.images)):
+            filename = self._next_image_candidate()
+            if not filename:
+                break
+            file_abs_path = os.path.abspath(os.path.join(self.image_folder, filename))
+            if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
+                print("Security error: Attempted directory traversal detected")
+                continue
+            try:
+                scaled = self._load_scaled_image_for_path(file_abs_path)
+                if scaled is None:
+                    continue
+                return scaled, file_abs_path
+            except Exception as e:
+                print(f"Error loading image '{filename}': {e}")
+        return None
+
+    def _schedule_preload(self):
+        if not self.images:
+            return
+        with self._preload_lock:
+            if self._preloaded is not None:
+                return
+            self._preloaded = self._preload_executor.submit(self._prepare_candidate)
+
     def get_random_image(self):
         """Get a random valid image, skipping unreadable/corrupt files."""
         if not self.images:
             return None, None
 
-        candidates = self.images.copy()
-        random.shuffle(candidates)
+        with self._preload_lock:
+            future = self._preloaded
+            self._preloaded = None
 
-        for filename in candidates:
+        result = None
+        if future is not None:
             try:
-                self.current_image_path = os.path.join(self.image_folder, filename)
+                result = future.result(timeout=5)
+            except Exception:
+                result = None
 
-                # Security check: verify the resolved path is still within image folder
-                file_abs_path = os.path.abspath(self.current_image_path)
-                if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
-                    print("Security error: Attempted directory traversal detected")
-                    continue
+        if result is None:
+            result = self._prepare_candidate()
+        if result is None:
+            return None, None
 
-                with Image.open(file_abs_path) as opened:
-                    img = self._scale_image(opened)
-                if img is None:
-                    continue
-                return ImageTk.PhotoImage(img), file_abs_path
-            except Exception as e:
-                print(f"Error loading image '{filename}': {e}")
-                continue
+        img, file_abs_path = result
+        self.current_image_path = file_abs_path
+        self._schedule_preload()
+        return ImageTk.PhotoImage(img), file_abs_path
 
-        return None, None
+    def close(self):
+        with self._preload_lock:
+            future = self._preloaded
+            self._preloaded = None
+        if future is not None:
+            future.cancel()
+        self._preload_executor.shutdown(wait=False, cancel_futures=True)
 
     def _scale_image(self, img, max_size=None):
         """Scale image maintaining aspect ratio and centered letterboxing."""

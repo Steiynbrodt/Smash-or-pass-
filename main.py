@@ -585,6 +585,7 @@ class SmashOrPassApp:
             self.root.after_cancel(self.resize_after_id)
         if self.network:
             self.network.close()
+        self.game.close()
         self.root.quit()
 
 if __name__ == '__main__':
