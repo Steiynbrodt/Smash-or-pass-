@@ -1,5 +1,6 @@
 import os
 import random
+from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageTk
 
 class GameLogic:
@@ -44,7 +45,14 @@ class GameLogic:
                         images.append(rel_path)
         except OSError as e:
             print(f"Error reading image folder: {e}")
-        
+            return images
+
+        max_workers = min(32, max(4, (os.cpu_count() or 1) * 2))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for rel_path in pool.map(_validate_image_path, candidate_paths):
+                if rel_path:
+                    images.append(rel_path)
+
         return images
 
     def get_random_image(self):
