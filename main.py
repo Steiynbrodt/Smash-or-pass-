@@ -521,7 +521,7 @@ class SmashOrPassApp:
             self._receive_vote_results(results_payload)
             if self.next_round_after_id:
                 self.root.after_cancel(self.next_round_after_id)
-            self.next_round_after_id = self.root.after(1500, self.next_image)
+            self.next_round_after_id = self.root.after(3500, self.next_image)
 
     def receive_vote_results(self, data, addr=None):
         self.root.after(0, lambda: self._receive_vote_results(data))
