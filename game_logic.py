@@ -43,26 +43,33 @@ class GameLogic:
         return images
 
     def get_random_image(self):
-        """Get random image with security validation"""
+        """Get a random valid image, skipping unreadable/corrupt files."""
         if not self.images:
             return None, None
-        
-        try:
-            filename = random.choice(self.images)
-            self.current_image_path = os.path.join(self.image_folder, filename)
-            
-            # Security check: verify the resolved path is still within image folder
-            file_abs_path = os.path.abspath(self.current_image_path)
-            if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
-                print(f"Security error: Attempted directory traversal detected")
-                return None, None
-            
-            img = Image.open(file_abs_path)
-            img = self._scale_image(img)
-            return ImageTk.PhotoImage(img), file_abs_path
-        except Exception as e:
-            print(f"Error loading image: {e}")
-            return None, None
+
+        candidates = self.images.copy()
+        random.shuffle(candidates)
+
+        for filename in candidates:
+            try:
+                self.current_image_path = os.path.join(self.image_folder, filename)
+
+                # Security check: verify the resolved path is still within image folder
+                file_abs_path = os.path.abspath(self.current_image_path)
+                if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
+                    print("Security error: Attempted directory traversal detected")
+                    continue
+
+                with Image.open(file_abs_path) as opened:
+                    img = self._scale_image(opened)
+                if img is None:
+                    continue
+                return ImageTk.PhotoImage(img), file_abs_path
+            except Exception as e:
+                print(f"Error loading image '{filename}': {e}")
+                continue
+
+        return None, None
 
     def _scale_image(self, img, max_size=None):
         """Scale image maintaining aspect ratio and centered letterboxing."""
