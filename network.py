@@ -139,6 +139,10 @@ class Network:
                 incoming_hash = message.get("room_key_hash")
                 if not isinstance(incoming_hash, str) or not hmac.compare_digest(incoming_hash, self.room_key_hash):
                     continue
+            else:
+                incoming_hash = message.get("room_key_hash")
+                if not isinstance(incoming_hash, str) or not hmac.compare_digest(incoming_hash, self.room_key_hash):
+                    continue
 
             callback = self.callbacks.get(msg_type)
             if callback:
