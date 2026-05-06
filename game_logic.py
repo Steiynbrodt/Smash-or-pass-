@@ -9,6 +9,7 @@ class GameLogic:
         self.images = self._load_images()
         self.current_image = None
         self.current_image_path = None
+        self.bad_images = set()
 
     def _load_images(self):
         """Load images from folder with path validation"""
@@ -43,26 +44,41 @@ class GameLogic:
         return images
 
     def get_random_image(self):
-        """Get random image with security validation"""
+        """Get a random valid image, skipping unreadable/corrupt files."""
         if not self.images:
             return None, None
-        
-        try:
-            filename = random.choice(self.images)
-            self.current_image_path = os.path.join(self.image_folder, filename)
-            
-            # Security check: verify the resolved path is still within image folder
-            file_abs_path = os.path.abspath(self.current_image_path)
-            if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
-                print(f"Security error: Attempted directory traversal detected")
-                return None, None
-            
-            img = Image.open(file_abs_path)
-            img = self._scale_image(img)
-            return ImageTk.PhotoImage(img), file_abs_path
-        except Exception as e:
-            print(f"Error loading image: {e}")
+
+        usable_images = [name for name in self.images if name not in self.bad_images]
+        if not usable_images:
             return None, None
+
+        # Avoid shuffling thousands of files every round; sample by random index.
+        max_attempts = min(len(usable_images), 25)
+
+        for _ in range(max_attempts):
+            filename = random.choice(usable_images)
+            try:
+                self.current_image_path = os.path.join(self.image_folder, filename)
+
+                # Security check: verify the resolved path is still within image folder
+                file_abs_path = os.path.abspath(self.current_image_path)
+                if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
+                    print("Security error: Attempted directory traversal detected")
+                    self.bad_images.add(filename)
+                    continue
+
+                with Image.open(file_abs_path) as opened:
+                    img = self._scale_image(opened)
+                if img is None:
+                    self.bad_images.add(filename)
+                    continue
+                return ImageTk.PhotoImage(img), file_abs_path
+            except Exception as e:
+                print(f"Error loading image '{filename}': {e}")
+                self.bad_images.add(filename)
+                continue
+
+        return None, None
 
     def _scale_image(self, img, max_size=None):
         """Scale image maintaining aspect ratio and centered letterboxing."""
