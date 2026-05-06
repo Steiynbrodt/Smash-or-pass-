@@ -1,5 +1,6 @@
 import os
 import random
+from concurrent.futures import ThreadPoolExecutor
 from PIL import Image, ImageTk
 
 class GameLogic:
@@ -24,22 +25,32 @@ class GameLogic:
             return []
         
         images = []
+        valid_ext = ('.png', '.jpg', '.jpeg', '.gif', '.bmp')
+
+        def _validate_image_path(file_path):
+            file_abs_path = os.path.abspath(file_path)
+            if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
+                print(f"Security warning: Skipping file outside image folder: {file_path}")
+                return None
+            filename = os.path.basename(file_abs_path)
+            if not filename.lower().endswith(valid_ext) or not os.path.isfile(file_abs_path):
+                return None
+            return os.path.relpath(file_abs_path, self.image_folder)
+
+        candidate_paths = []
         try:
-            for f in os.listdir(self.image_folder):
-                # Validate file is within image folder (prevent directory traversal)
-                file_path = os.path.join(self.image_folder, f)
-                file_abs_path = os.path.abspath(file_path)
-                
-                # Security check: ensure file is within the image folder
-                if os.path.commonpath([self.image_folder, file_abs_path]) != self.image_folder:
-                    print(f"Security warning: Skipping file outside image folder: {f}")
-                    continue
-                
-                if os.path.isfile(file_abs_path) and f.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
-                    images.append(f)
+            for root, _, files in os.walk(self.image_folder):
+                candidate_paths.extend(os.path.join(root, f) for f in files)
         except OSError as e:
             print(f"Error reading image folder: {e}")
-        
+            return images
+
+        max_workers = min(32, max(4, (os.cpu_count() or 1) * 2))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            for rel_path in pool.map(_validate_image_path, candidate_paths):
+                if rel_path:
+                    images.append(rel_path)
+
         return images
 
     def get_random_image(self):
