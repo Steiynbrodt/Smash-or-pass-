@@ -1,0 +1,288 @@
+name: Build and Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Tag to create (e.g. v1.0.0)"
+        required: true
+        type: string
+
+      release_name:
+        description: "Release display name (optional)"
+        required: false
+        type: string
+        default: ""
+
+      overwrite_release:
+        description: "Delete existing release with same tag"
+        required: false
+        type: boolean
+        default: true
+
+      draft:
+        description: "Create draft release"
+        required: false
+        type: boolean
+        default: false
+
+      prerelease:
+        description: "Create prerelease"
+        required: false
+        type: boolean
+        default: false
+
+      app_name:
+        description: "Output application / game name"
+        required: false
+        type: string
+        default: "osint-mindmap"
+
+      main_py_file:
+        description: "Main python entry file"
+        required: false
+        type: string
+        default: "OSINT-framework.py"
+
+      requirements_file:
+        description: "Requirements file"
+        required: false
+        type: string
+        default: "requirements.txt"
+
+      python_version:
+        description: "Python version"
+        required: false
+        type: string
+        default: "3.10"
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.runs_on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            runs_on: windows-latest
+            artifact_name: windows
+
+          - name: linux-ubuntu
+            runs_on: ubuntu-latest
+            artifact_name: linux-ubuntu
+
+          - name: linux-arch
+            runs_on: ubuntu-latest
+            container_image: archlinux:latest
+            artifact_name: linux-arch
+
+    container: ${{ matrix.container_image }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        if: ${{ matrix.name != 'linux-arch' }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ inputs.python_version }}
+
+      - name: Install Python + build dependencies (Arch container)
+        if: ${{ matrix.name == 'linux-arch' }}
+        shell: sh
+        run: |
+          set -eu
+          REQ_FILE="${{ inputs.requirements_file }}"
+
+          pacman -Sy --noconfirm
+          pacman -S --noconfirm python python-pip python-virtualenv tk base-devel
+
+          python -m venv .venv
+          . .venv/bin/activate
+
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+
+          if [ -f "$REQ_FILE" ]; then
+            python -m pip install -r "$REQ_FILE"
+          fi
+
+      - name: Install build dependencies (Windows)
+        if: ${{ matrix.name == 'windows' }}
+        shell: pwsh
+        run: |
+          $ReqFile = "${{ inputs.requirements_file }}"
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+
+          if (Test-Path $ReqFile) {
+            python -m pip install -r $ReqFile
+          }
+
+      - name: Install build dependencies (Ubuntu)
+        if: ${{ matrix.name == 'linux-ubuntu' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQ_FILE="${{ inputs.requirements_file }}"
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller
+
+          if [ -f "$REQ_FILE" ]; then
+            python -m pip install -r "$REQ_FILE"
+          fi
+
+      - name: Build Windows EXE
+        if: ${{ matrix.name == 'windows' }}
+        shell: pwsh
+        run: |
+          $App = "${{ inputs.app_name }}"
+          pyinstaller --onefile --noconsole --name "$App" "${{ inputs.main_py_file }}"
+
+          if (!(Test-Path "dist\$App.exe")) {
+            throw "Expected dist\$App.exe not found"
+          }
+
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Copy-Item "dist\$App.exe" "out\$App-windows.exe" -Force
+
+      - name: Build Ubuntu Linux binary
+        if: ${{ matrix.name == 'linux-ubuntu' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="${{ inputs.app_name }}"
+
+          pyinstaller --onefile --noconsole --name "$APP" "${{ inputs.main_py_file }}"
+
+          if [ ! -f "dist/$APP" ]; then
+            echo "Expected dist/$APP not found"
+            ls -la dist || true
+            exit 1
+          fi
+
+          mkdir -p out
+          cp "dist/$APP" "out/$APP-linux-ubuntu"
+          chmod +x "out/$APP-linux-ubuntu"
+
+      - name: Build Arch Linux binary
+        if: ${{ matrix.name == 'linux-arch' }}
+        shell: sh
+        run: |
+          set -eu
+          APP="${{ inputs.app_name }}"
+
+          . .venv/bin/activate
+
+          pyinstaller --onefile --noconsole --name "$APP" "${{ inputs.main_py_file }}"
+
+          if [ ! -f "dist/$APP" ]; then
+            echo "Expected dist/$APP not found"
+            ls -la dist || true
+            exit 1
+          fi
+
+          mkdir -p out
+          cp "dist/$APP" "out/$APP-linux-arch"
+          chmod +x "out/$APP-linux-arch"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: app-${{ matrix.artifact_name }}
+          path: out/
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v6
+        with:
+          merge-multiple: true
+          path: downloaded
+
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release_assets
+          cp downloaded/* release_assets/
+          echo "Assets:"
+          ls -la release_assets
+
+      - name: Make Linux binaries executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x release_assets/*-linux-* || true
+
+      - name: Generate SHA256SUMS.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release_assets
+
+          if [ -z "$(ls -A .)" ]; then
+            echo "No assets found"
+            exit 1
+          fi
+
+          sha256sum * | LC_ALL=C sort > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Delete existing release (optional)
+        if: ${{ inputs.overwrite_release }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag_name }}"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ inputs.tag_name }}"
+          TITLE_INPUT="${{ inputs.release_name }}"
+
+          if [ -n "$TITLE_INPUT" ]; then
+            TITLE="$TITLE_INPUT"
+          else
+            TITLE="Release $TAG"
+          fi
+
+          FLAGS=()
+          if [ "${{ inputs.draft }}" = "true" ]; then
+            FLAGS+=(--draft)
+          fi
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            FLAGS+=(--prerelease)
+          fi
+
+          gh release create "$TAG" release_assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TITLE" \
+            --notes "" \
+            "${FLAGS[@]}"
