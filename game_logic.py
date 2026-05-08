@@ -45,7 +45,7 @@ class GameLogic:
             return []
 
         candidates = []
-        valid_ext = ('.png', '.jpg', '.jpeg', '.gif', '.bmp')
+        valid_ext = ('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp')
 
         try:
             for root, _, files in os.walk(self.image_folder):
