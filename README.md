@@ -5,7 +5,7 @@ A lightweight LAN/WAN party game built with Python + Tkinter where players vote 
 ## Features
 - Host or join a room with a simple room key.
 - Live vote syncing over UDP.
-- Local image folder support (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`).
+- Local image folder support (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`, `.webp`).
 - Auto-created config file with sensible defaults.
 - Basic input/path validation for safer local file handling.
 

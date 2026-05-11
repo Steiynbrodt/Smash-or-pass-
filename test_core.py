@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, features
 
 from game_logic import GameLogic
 from network import _validate_port, _validate_room_key, _validate_username, _hash_room_key
@@ -42,6 +42,19 @@ class TestGameLogic(unittest.TestCase):
 
             self.assertIsNotNone(scaled)
             self.assertEqual(scaled.size, (320, 240))
+
+    def test_loads_webp_images(self):
+        if not features.check("webp"):
+            self.skipTest("Pillow was built without WebP support")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            webp_path = folder / "sample.webp"
+            Image.new("RGB", (64, 64), (0, 255, 0)).save(webp_path, format="WEBP")
+
+            logic = GameLogic(str(folder))
+
+            self.assertIn("sample.webp", logic.images)
 
 
 if __name__ == "__main__":
