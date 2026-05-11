@@ -153,13 +153,36 @@ jobs:
             exit 1
           fi
 
-          if ! find "dist/$SMOKE_APP" -type f | grep -Eiq "PIL|Pillow"; then
+          PIL_DIR="$(find "dist/$SMOKE_APP" -type d -iname "PIL" | head -n 1 || true)"
+          PILLOW_LIBS_DIR="$(find "dist/$SMOKE_APP" -type d -iname "pillow.libs" | head -n 1 || true)"
+
+          if [ -z "$PIL_DIR" ] && [ -z "$PILLOW_LIBS_DIR" ]; then
             echo "Pillow artifacts were not detected in packaged smoke build"
-            find "dist/$SMOKE_APP" -maxdepth 3 -type f | head -n 200
+            find "dist/$SMOKE_APP" -maxdepth 4 -mindepth 1 | head -n 300
             exit 1
           fi
 
-          rm -rf build "$SMOKE_APP.spec" "dist/$SMOKE_APP"
+          if [ -n "$PIL_DIR" ] && [ -z "$(find "$PIL_DIR" -type f | head -n 1 || true)" ]; then
+            echo "Detected PIL directory is empty: $PIL_DIR"
+            find "dist/$SMOKE_APP" -maxdepth 4 -mindepth 1 | head -n 300
+            exit 1
+          fi
+
+          SMOKE_BIN="dist/$SMOKE_APP/$SMOKE_APP"
+          if [ ! -x "$SMOKE_BIN" ]; then
+            echo "Expected smoke binary not executable: $SMOKE_BIN"
+            find "dist/$SMOKE_APP" -maxdepth 3 -mindepth 1 | head -n 200
+            exit 1
+          fi
+
+          timeout 20s "$SMOKE_BIN" --version > smoke-check.log 2>&1 || true
+          if grep -Eiq "(No module named|ModuleNotFoundError).*(PIL|Pillow)" smoke-check.log; then
+            echo "Smoke binary reported missing Pillow at runtime"
+            cat smoke-check.log
+            exit 1
+          fi
+
+          rm -rf build "$SMOKE_APP.spec" "dist/$SMOKE_APP" smoke-check.log
 
       - name: Build Windows EXE
         if: ${{ matrix.name == 'windows' }}
