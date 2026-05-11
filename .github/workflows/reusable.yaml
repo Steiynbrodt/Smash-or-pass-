@@ -150,7 +150,7 @@ jobs:
             exit 1
           fi
 
-          if ! find "dist/$SMOKE_APP" -type f | rg -q "PIL|Pillow"; then
+          if ! find "dist/$SMOKE_APP" -type f | grep -Eiq "PIL|Pillow"; then
             echo "Pillow artifacts were not detected in packaged smoke build"
             find "dist/$SMOKE_APP" -maxdepth 3 -type f | head -n 200
             exit 1
