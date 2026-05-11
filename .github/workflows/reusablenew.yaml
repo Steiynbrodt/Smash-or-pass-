@@ -86,11 +86,11 @@ jobs:
     container: ${{ matrix.container_image }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         if: ${{ matrix.name != 'linux-arch' }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python_version }}
 
@@ -153,9 +153,9 @@ jobs:
             exit 1
           fi
 
-          if ! find "dist/$SMOKE_APP" -type f | rg -q "PIL|Pillow"; then
+          if ! find "dist/$SMOKE_APP" -type f \( -path "*/PIL/*" -o -name "*_imaging*" -o -name "*Pillow*" \) | grep -q .; then
             echo "Pillow artifacts were not detected in packaged smoke build"
-            find "dist/$SMOKE_APP" -maxdepth 3 -type f | head -n 200
+            find "dist/$SMOKE_APP" -maxdepth 4 -type f | head -n 300
             exit 1
           fi
 
@@ -216,7 +216,7 @@ jobs:
           chmod +x "out/$APP-linux-arch"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: app-${{ matrix.artifact_name }}
           path: out/
@@ -227,12 +227,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Download artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v4
         with:
           merge-multiple: true
           path: downloaded
