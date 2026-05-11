@@ -36,13 +36,13 @@ on:
         description: "Output application / game name"
         required: false
         type: string
-        default: "osint-mindmap"
+        default: "smash-or-pass"
 
       main_py_file:
         description: "Main python entry file"
         required: false
         type: string
-        default: "OSINT-framework.py"
+        default: "main.py"
 
       requirements_file:
         description: "Requirements file"
@@ -136,12 +136,34 @@ jobs:
             python -m pip install -r "$REQ_FILE"
           fi
 
+      - name: Smoke check PyInstaller + Pillow bundle (Ubuntu)
+        if: ${{ matrix.name == 'linux-ubuntu' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SMOKE_APP="smoke-pil-check"
+
+          pyinstaller --onedir --noconsole --collect-all PIL --name "$SMOKE_APP" "${{ inputs.main_py_file }}"
+
+          if [ ! -d "dist/$SMOKE_APP" ]; then
+            echo "Expected dist/$SMOKE_APP not found"
+            exit 1
+          fi
+
+          if ! find "dist/$SMOKE_APP" -type f \( -path "*/PIL/*" -o -name "*_imaging*" -o -name "*Pillow*" \) | grep -q .; then
+            echo "Pillow artifacts were not detected in packaged smoke build"
+            find "dist/$SMOKE_APP" -maxdepth 4 -type f | head -n 300
+            exit 1
+          fi
+
+          rm -rf build "$SMOKE_APP.spec" "dist/$SMOKE_APP"
+
       - name: Build Windows EXE
         if: ${{ matrix.name == 'windows' }}
         shell: pwsh
         run: |
           $App = "${{ inputs.app_name }}"
-          pyinstaller --onefile --noconsole --name "$App" "${{ inputs.main_py_file }}"
+          pyinstaller --onefile --noconsole --collect-all PIL --name "$App" "${{ inputs.main_py_file }}"
 
           if (!(Test-Path "dist\$App.exe")) {
             throw "Expected dist\$App.exe not found"
@@ -157,7 +179,7 @@ jobs:
           set -euo pipefail
           APP="${{ inputs.app_name }}"
 
-          pyinstaller --onefile --noconsole --name "$APP" "${{ inputs.main_py_file }}"
+          pyinstaller --onefile --noconsole --collect-all PIL --name "$APP" "${{ inputs.main_py_file }}"
 
           if [ ! -f "dist/$APP" ]; then
             echo "Expected dist/$APP not found"
@@ -178,7 +200,7 @@ jobs:
 
           . .venv/bin/activate
 
-          pyinstaller --onefile --noconsole --name "$APP" "${{ inputs.main_py_file }}"
+          pyinstaller --onefile --noconsole --collect-all PIL --name "$APP" "${{ inputs.main_py_file }}"
 
           if [ ! -f "dist/$APP" ]; then
             echo "Expected dist/$APP not found"
